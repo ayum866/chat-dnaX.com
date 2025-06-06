@@ -1,0 +1,303 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Live Messaging Platform (PubNub)</title>
+    <style>
+        /* Basic CSS for styling the chat interface */
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            background-color: #f0f2f5;
+            color: #333;
+        }
+        .chat-container {
+            width: 400px;
+            height: 600px;
+            background-color: #fff;
+            box-shadow: 0 0 15px rgba(0, 0, 0, 0.1);
+            border-radius: 12px;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+        .chat-header {
+            background-color: #007bff;
+            color: white;
+            padding: 18px;
+            text-align: center;
+            font-size: 1.3em;
+            border-top-left-radius: 10px;
+            border-top-right-radius: 10px;
+        }
+        .chat-messages {
+            flex-grow: 1;
+            padding: 15px;
+            overflow-y: auto;
+            border-bottom: 1px solid #eee;
+            display: flex;
+            flex-direction: column;
+            gap: 10px; /* Space between messages */
+        }
+        .message {
+            margin-bottom: 5px; /* Adjust for gap */
+            padding: 10px 14px;
+            border-radius: 20px;
+            max-width: 75%;
+            word-wrap: break-word;
+            line-height: 1.4;
+            font-size: 0.95em;
+        }
+        .message.sent {
+            background-color: #dcf8c6; /* Light green for sent messages */
+            align-self: flex-end; /* Align to right */
+            margin-left: auto; /* Push to right */
+            border-bottom-right-radius: 5px; /* Sharpen corner for user message */
+        }
+        .message.received {
+            background-color: #e0e0e0; /* Light gray for received messages */
+            align-self: flex-start; /* Align to left */
+            margin-right: auto; /* Push to left */
+            border-bottom-left-radius: 5px; /* Sharpen corner for other message */
+        }
+        .message .sender {
+            font-weight: bold;
+            margin-bottom: 3px;
+            font-size: 0.85em;
+            color: #555;
+        }
+        .message.sent .sender {
+             text-align: right;
+             color: #333;
+        }
+        .chat-input-area {
+            display: flex;
+            padding: 15px;
+            border-top: 1px solid #eee;
+            background-color: #f9f9f9;
+            border-bottom-left-radius: 10px;
+            border-bottom-right-radius: 10px;
+        }
+        .chat-input-area input {
+            flex-grow: 1;
+            padding: 12px 18px;
+            border: 1px solid #ddd;
+            border-radius: 25px;
+            margin-right: 10px;
+            outline: none;
+            font-size: 1em;
+            transition: border-color 0.2s;
+        }
+        .chat-input-area input:focus {
+            border-color: #007bff;
+        }
+        .chat-input-area button {
+            background-color: #007bff;
+            color: white;
+            border: none;
+            padding: 12px 20px;
+            border-radius: 25px;
+            cursor: pointer;
+            font-size: 1em;
+            outline: none;
+            transition: background-color 0.2s ease;
+        }
+        .chat-input-area button:hover {
+            background-color: #0056b3;
+        }
+        .system-message {
+            text-align: center;
+            font-style: italic;
+            color: #888;
+            font-size: 0.85em;
+            margin: 5px 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="chat-container">
+        <div class="chat-header">
+            Live Chat with PubNub
+        </div>
+        <div class="chat-messages" id="chat-messages">
+            <!-- Messages will be appended here by JavaScript -->
+        </div>
+        <div class="chat-input-area">
+            <input type="text" id="message-input" placeholder="Type your message...">
+            <button id="send-button">Send</button>
+        </div>
+    </div>
+
+    <!-- Include PubNub JavaScript SDK from CDN -->
+    <!-- You can find the latest version on PubNub's website or CDNJS -->
+    <script src="https://cdn.pubnub.com/sdk/javascript/pubnub.4.37.0.min.js"></script>
+
+    <script>
+        // --- PubNub Configuration ---
+        // IMPORTANT: Replace 'YOUR_PUBNUB_PUBLISH_KEY' and 'YOUR_PUBNUB_SUBSCRIBE_KEY'
+        // with your actual keys from the PubNub Dashboard.
+        // Go to https://www.pubnub.com/ and create a free account to get them.
+        const PUBNUB_PUBLISH_KEY = 'pub-c-7363eb1d-4adc-4505-b7e5-23d4e0809780';
+        const PUBNUB_SUBSCRIBE_KEY = 'sub-c-c1da4e46-3a10-43cb-82a0-6f28976a1510';
+        const PUBNUB_SECRET_KEY = 'sec-c-YWVjYmYwOWEtZGQyMy00OTdiLWIzMzAtYzdjMzZlZWUxMGQ2'; // Your PubNub Secret Key
+
+        // Choose a unique channel name for your chat. All users on this channel will see messages.
+        const CHAT_CHANNEL = 'my_super_awesome_chat_channel';
+
+        // Generate a simple, unique user ID for this session.
+        // In a real application, this would come from a login system.
+        const CURRENT_USER_ID = 'user_' + Math.random().toString(36).substring(2, 10);
+
+        // Initialize PubNub
+        const pubnub = new PubNub({
+            publishKey: PUBNUB_PUBLISH_KEY,
+            subscribeKey: PUBNUB_SUBSCRIBE_KEY,
+            secretKey: PUBNUB_SECRET_KEY, // Added your secret key here
+            uuid: CURRENT_USER_ID, // Use 'uuid' for user identification in PubNub SDK v4
+            // You can add more configuration options here if needed,
+            // e.g., 'logVerbosity: true' for debugging.
+        });
+
+        // --- DOM Elements ---
+        const chatMessagesDiv = document.getElementById('chat-messages');
+        const messageInput = document.getElementById('message-input');
+        const sendButton = document.getElementById('send-button');
+
+        // Function to display a message in the chat window
+        function displayMessage(sender, messageText, isSentByCurrentUser = false, isSystemMessage = false) {
+            const messageElement = document.createElement('div');
+
+            if (isSystemMessage) {
+                messageElement.classList.add('system-message');
+                messageElement.textContent = messageText;
+            } else {
+                messageElement.classList.add('message');
+                if (isSentByCurrentUser) {
+                    messageElement.classList.add('sent');
+                } else {
+                    messageElement.classList.add('received');
+                }
+
+                const senderElement = document.createElement('div');
+                senderElement.classList.add('sender');
+                senderElement.textContent = sender;
+
+                const contentElement = document.createElement('div');
+                contentElement.textContent = messageText;
+
+                messageElement.appendChild(senderElement);
+                messageElement.appendChild(contentElement);
+            }
+
+            chatMessagesDiv.appendChild(messageElement);
+
+            // Scroll to the bottom of the chat automatically
+            chatMessagesDiv.scrollTop = chatMessagesDiv.scrollHeight;
+        }
+
+        // --- PubNub Event Listeners ---
+        // This is where you process incoming real-time data
+        pubnub.addListener({
+            message: function(event) {
+                // 'event.publisher' is the UUID of the user who sent the message
+                const isMyMessage = event.publisher === CURRENT_USER_ID;
+                
+                // Get the sender name from the message payload or use the publisher UUID
+                const senderDisplayName = event.message.sender || event.publisher.substring(0, 8); // Shorten UUID for display
+
+                displayMessage(senderDisplayName, event.message.text, isMyMessage);
+            },
+            status: function(statusEvent) {
+                if (statusEvent.category === 'PNConnectedCategory') {
+                    console.log('Connected to PubNub!');
+                    displayMessage('System', 'Connected to the chat.', false, true);
+                } else if (statusEvent.category === 'PNDisconnectedCategory') {
+                    console.log('Disconnected from PubNub.');
+                    displayMessage('System', 'Disconnected from the chat.', false, true);
+                } else if (statusEvent.category === 'PNNetworkIssuesCategory') {
+                    console.warn('Network issues detected:', statusEvent.errorData.message);
+                    displayMessage('System', 'Network issues detected. Reconnecting...', false, true);
+                } else if (statusEvent.category === 'PNUnexpectedDisconnectCategory') {
+                    console.warn('Unexpected disconnect:', statusEvent.errorData.message);
+                    displayMessage('System', 'Unexpected disconnection. Attempting to reconnect...', false, true);
+                }
+                // You can add more error handling and status updates here
+            },
+            presence: function(presenceEvent) {
+                // Presence events tell you when users join, leave, or timeout
+                let presenceMessage = '';
+                const userUUID = presenceEvent.uuid.substring(0, 8); // Shorten UUID for display
+
+                if (presenceEvent.action === 'join') {
+                    presenceMessage = `${userUUID} joined the chat.`;
+                } else if (presenceEvent.action === 'leave' || presenceEvent.action === 'timeout') {
+                    presenceMessage = `${userUUID} left the chat.`;
+                }
+                // Add more actions like 'state-change' if you're using user states
+                
+                if (presenceMessage) {
+                    displayMessage('System', presenceMessage, false, true);
+                }
+            }
+        });
+
+        // --- Subscribe to the chat channel ---
+        // This is necessary to receive messages and presence events on that channel.
+        pubnub.subscribe({
+            channels: [CHAT_CHANNEL],
+            withPresence: true // Important: Enable presence to get join/leave events
+        });
+
+        // --- Function to Send Message ---
+        function sendMessage() {
+            const messageText = messageInput.value.trim();
+
+            if (messageText) {
+                // Publish the message to the specified channel
+                pubnub.publish({
+                    channel: CHAT_CHANNEL,
+                    message: {
+                        sender: 'User ' + CURRENT_USER_ID.substring(5, 10), // A more readable sender name
+                        text: messageText,
+                        // You can add more data to your message object, e.g., timestamp
+                        // timestamp: new Date().toISOString()
+                    }
+                }).then(() => {
+                    console.log("Message published successfully!");
+                    messageInput.value = ''; // Clear input after sending
+                }).catch((error) => {
+                    console.error("Error publishing message:", error);
+                    // Provide a user-friendly message for the error
+                    // You might want to use a custom modal instead of alert() in a real app
+                    alert("Failed to send message. Please ensure your PubNub keys are correct and you have an active internet connection, and that your keys have Publish and Subscribe permissions enabled in the PubNub dashboard.");
+                });
+            }
+        }
+
+        // --- Event Listeners for Input and Button ---
+        sendButton.addEventListener('click', sendMessage);
+        messageInput.addEventListener('keypress', function(event) {
+            if (event.key === 'Enter') {
+                event.preventDefault(); // Prevent default Enter key behavior (e.g., new line)
+                sendMessage();
+            }
+        });
+
+        // Initial welcome message when the app loads
+        displayMessage('System', `Welcome to the chat! Your ID: ${CURRENT_USER_ID.substring(5, 10)}`, false, true);
+
+        // Optional: Gracefully disconnect PubNub when the user closes the tab/window
+        window.addEventListener('beforeunload', () => {
+            pubnub.unsubscribeAll();
+            pubnub.destroy(); // Clean up PubNub instance
+            console.log('PubNub instance destroyed on page unload.');
+        });
+
+    </script>
+</body>
+</html>
